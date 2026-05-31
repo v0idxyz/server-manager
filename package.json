@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Desktop app to manage your servers, what they do, their connections, and credentials.",
   "main": "main.js",
-  "author": "",
+  "author": "v0idxyz",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -23,7 +23,15 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "v0idxyz",
+        "repo": "server-manager",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^33.0.0",

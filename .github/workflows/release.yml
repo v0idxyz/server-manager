@@ -1,0 +1,42 @@
+name: Build & Release (Windows)
+
+# Builds the Windows installer with electron-builder.
+#   * Push a tag like v1.0.0  -> builds AND publishes the .exe to a GitHub Release.
+#   * Manual run (Actions tab) -> builds and uploads the .exe as a workflow artifact (no release).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create/upload releases
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer (+ publish on tags)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+
+      - name: Upload installer artifact (manual / non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-manager-windows-installer
+          path: dist/*.exe
+          if-no-files-found: error
