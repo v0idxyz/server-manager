@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Manager</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --border: #2a3344;
+    --text: #e6edf3;
+    --muted: #8b96a5;
+    --accent: #4f9cff;
+    --accent-2: #2f6fd0;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --shadow: 0 8px 30px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  /* ---- Top bar ---- */
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+    flex: none;
+  }
+  .warn-banner { flex: none; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .logo { color: var(--accent); }
+  .spacer { flex: 1; }
+  .search {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 8px; width: 220px; font-size: 13px;
+  }
+  .search::placeholder { color: var(--muted); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); padding: 7px 12px; font-size: 13px;
+    transition: background .12s, border-color .12s, opacity .12s;
+  }
+  button:hover { background: #232b3a; }
+  button.primary { background: var(--accent-2); border-color: var(--accent-2); }
+  button.primary:hover { background: var(--accent); }
+  button.danger { color: var(--red); border-color: #50272a; }
+  button.danger:hover { background: #2a1b1e; }
+  button.active { background: var(--accent-2); border-color: var(--accent); }
+  button.icon { padding: 7px 10px; }
+
+  /* ---- Layout ---- */
+  .wrap { display: flex; flex: 1; min-height: 0; position: relative; }
+  .canvas-area { position: relative; flex: 1; overflow: hidden; background:
+      radial-gradient(circle at 1px 1px, #1b2230 1px, transparent 0) 0 0 / 26px 26px,
+      var(--bg);
+  }
+  .canvas-area { cursor: grab; }
+  .canvas-area.panning { cursor: grabbing; }
+  #world { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+  #edges { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
+  .zoom-ctrl {
+    position: absolute; bottom: 14px; right: 14px; display: flex; align-items: center; gap: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 4px;
+    box-shadow: var(--shadow); z-index: 6;
+  }
+  .zoom-ctrl button { padding: 5px 10px; }
+  .zoom-ctrl #zoomLabel { font-size: 12px; color: var(--muted); min-width: 42px; text-align: center; }
+  .hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+    padding: 6px 12px; border-radius: 20px; font-size: 12px; pointer-events: none;
+    box-shadow: var(--shadow);
+  }
+  .connect-banner {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    background: var(--accent-2); color: #fff; padding: 7px 14px; border-radius: 20px;
+    font-size: 13px; box-shadow: var(--shadow); display: none;
+  }
+
+  /* ---- Server node ---- */
+  .node {
+    position: absolute; width: 168px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow); cursor: grab; user-select: none;
+    overflow: hidden; transition: border-color .12s, transform .05s;
+  }
+  .node:hover { border-color: #3d4a60; }
+  .node.dragging { cursor: grabbing; z-index: 50; }
+  .node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79,156,255,.35), var(--shadow); }
+  .node.connect-target:hover { border-color: var(--green); box-shadow: 0 0 0 2px rgba(63,185,80,.4); }
+  .node .bar { height: 5px; background: var(--accent); }
+  .node .body { padding: 10px 12px; }
+  .node .name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .node .role { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .node .host { color: var(--accent); font-size: 11px; margin-top: 7px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+
+  /* edge labels */
+  .edge-label {
+    position: absolute; transform: translate(-50%,-50%); background: var(--panel-2);
+    border: 1px solid var(--border); color: var(--muted); font-size: 11px; padding: 1px 7px;
+    border-radius: 10px; pointer-events: none; white-space: nowrap;
+  }
+
+  .empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; color: var(--muted); gap: 14px; text-align: center; pointer-events: none;
+  }
+  .empty button { pointer-events: all; }
+
+  /* ---- Detail panel ---- */
+  .panel {
+    width: 340px; background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; flex: none; transform: translateX(100%);
+    transition: transform .18s ease; position: absolute; right: 0; top: 0; bottom: 0; z-index: 10;
+  }
+  .panel.open { transform: translateX(0); }
+  .panel .phead { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .panel .phead .name { font-size: 16px; font-weight: 600; flex: 1; }
+  .panel .pbody { padding: 16px; overflow-y: auto; flex: 1; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 4px; }
+  .field .val { font-size: 14px; word-break: break-word; }
+  .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .pw-row { display: flex; align-items: center; gap: 8px; }
+  .pw-row .pw {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--border); padding: 8px 10px;
+    border-radius: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    letter-spacing: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .conn-list { display: flex; flex-direction: column; gap: 6px; }
+  .conn-item {
+    display: flex; align-items: center; gap: 8px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 13px;
+  }
+  .conn-item .arrow { color: var(--muted); }
+  .conn-item .x { margin-left: auto; color: var(--muted); cursor: pointer; padding: 0 4px; }
+  .conn-item .x:hover { color: var(--red); }
+  .panel .pfoot { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  .tag { display: inline-block; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; margin: 2px 4px 2px 0; }
+
+  /* ---- Modal ---- */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+    align-items: center; justify-content: center; z-index: 100;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    width: 460px; max-width: 92vw; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow);
+  }
+  .modal h2 { margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--border); font-size: 16px; }
+  .modal .mbody { padding: 18px 20px; }
+  .modal .mfoot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  .form-row { margin-bottom: 13px; }
+  .form-row.two { display: flex; gap: 12px; }
+  .form-row.two > div { flex: 1; }
+  .form-row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .form-row input, .form-row textarea, .form-row select {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 9px 11px; border-radius: 8px; font: inherit; font-size: 13px;
+  }
+  .form-row textarea { resize: vertical; min-height: 58px; }
+  .color-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+  .swatch.sel { border-color: #fff; }
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--green); color: #fff; padding: 9px 18px; border-radius: 20px; font-size: 13px;
+    opacity: 0; transition: all .2s; z-index: 200; box-shadow: var(--shadow);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .warn-banner {
+    background: #2a2410; border-bottom: 1px solid #534619; color: var(--yellow);
+    font-size: 12px; padding: 6px 16px; text-align: center;
+  }
+  .warn-banner .close { float: right; cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="warn-banner" id="warnBanner">
+  ⚠ Passwords are stored unencrypted in a local data file (in your user AppData folder). Use only on a trusted, private machine. Export backups are plaintext too.
+  <span class="close" onclick="document.getElementById('warnBanner').remove()">✕ dismiss</span>
+</div>
+<header>
+  <h1><span class="logo">▦</span> Server Manager</h1>
+  <div class="spacer"></div>
+  <input class="search" id="search" placeholder="Search servers…" oninput="render()">
+  <button id="connectBtn" onclick="toggleConnectMode()">🔗 Connect</button>
+  <button onclick="exportData()">⭳ Export</button>
+  <button onclick="importData()">⭱ Import</button>
+  <button class="primary" onclick="openForm()">+ Add Server</button>
+</header>
+
+<div class="wrap">
+  <div class="canvas-area" id="canvas">
+    <div id="world">
+      <svg id="edges"></svg>
+      <div id="nodes"></div>
+    </div>
+    <div class="empty" id="emptyState">
+      <div style="font-size:42px">🖧</div>
+      <div>No servers yet.</div>
+      <button class="primary" onclick="openForm()">+ Add your first server</button>
+    </div>
+    <div class="connect-banner" id="connectBanner">Click a source server, then a target server to link them. Press Esc to cancel.</div>
+    <div class="hint">Drag background to pan • Scroll or pinch to zoom • Drag a server to move it</div>
+    <div class="zoom-ctrl">
+      <button onclick="zoomBy(1/1.2)" title="Zoom out">−</button>
+      <span id="zoomLabel">100%</span>
+      <button onclick="zoomBy(1.2)" title="Zoom in">+</button>
+      <button onclick="resetView()" title="Reset view (fit servers)">⤢ Reset</button>
+    </div>
+  </div>
+
+  <!-- Detail panel -->
+  <div class="panel" id="panel">
+    <div class="phead">
+      <span class="dot" id="pDot"></span>
+      <span class="name" id="pName"></span>
+      <button class="icon" onclick="closePanel()">✕</button>
+    </div>
+    <div class="pbody" id="pBody"></div>
+    <div class="pfoot">
+      <button class="primary" style="flex:1" onclick="editSelected()">✎ Edit</button>
+      <button class="danger" onclick="deleteSelected()">🗑 Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2 id="formTitle">Add Server</h2>
+    <div class="mbody">
+      <input type="hidden" id="f_id">
+      <div class="form-row">
+        <label>Name *</label>
+        <input id="f_name" placeholder="e.g. Web Server 01" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>What it does / role</label>
+        <textarea id="f_role" placeholder="e.g. Nginx reverse proxy + serves the main site"></textarea>
+      </div>
+      <div class="form-row two">
+        <div><label>Host / IP</label><input id="f_host" placeholder="192.168.1.10" autocomplete="off"></div>
+        <div><label>Port</label><input id="f_port" placeholder="22" autocomplete="off"></div>
+      </div>
+      <div class="form-row two">
+        <div><label>Username</label><input id="f_user" placeholder="root" autocomplete="off"></div>
+        <div><label>Password</label><input id="f_pass" placeholder="••••••••" autocomplete="off"></div>
+      </div>
+      <div class="form-row">
+        <label>VS Code remote folder (optional)</label>
+        <input id="f_vscode" placeholder="/home/user/project — leave blank to just connect" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>Tags (comma separated)</label>
+        <input id="f_tags" placeholder="production, linux, db" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label>Notes</label>
+        <textarea id="f_notes" placeholder="Anything else worth remembering…"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Color</label>
+        <div class="color-row" id="colorRow"></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button onclick="closeForm()">Cancel</button>
+      <button class="primary" onclick="saveServer()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Custom prompt dialog (Electron has no window.prompt) -->
+<div class="overlay" id="promptOverlay">
+  <div class="modal" style="width:380px">
+    <h2 id="promptTitle">Label</h2>
+    <div class="mbody">
+      <div class="form-row">
+        <input id="promptInput" autocomplete="off" placeholder="(optional)">
+      </div>
+    </div>
+    <div class="mfoot">
+      <button onclick="promptResolve(null)">Cancel</button>
+      <button class="primary" onclick="promptResolve(document.getElementById('promptInput').value)">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================ State ============================ */
+const COLORS = ['#4f9cff','#3fb950','#d29922','#f85149','#a371f7','#f778ba','#39c5cf','#db6d28'];
+let state = { servers: [], connections: [] };
+let selectedId = null;
+let connectMode = false;
+let connectSource = null;
+let pendingColor = COLORS[0];
+
+const NODE_W = 168;
+const NODE_H = 96; // approx for edge anchoring
+
+/* ============================ Persistence (Electron file store) ============================ */
+async function load() {
+  try {
+    const data = await window.api.load();
+    if (data) state = data;
+  } catch (e) { console.error(e); }
+  if (!state.servers) state.servers = [];
+  if (!state.connections) state.connections = [];
+}
+// Save to the JSON store file via the main process. Debounced so rapid
+// drags don't hammer the disk; the latest state always wins.
+let saveTimer;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    window.api.save(state).then(res => {
+      if (res && res.ok === false) toast('Save failed');
+    });
+  }, 120);
+}
+function uid() { return 's' + Math.random().toString(36).slice(2, 9) + (state.servers.length + state.connections.length); }
+
+/* ============================ Rendering ============================ */
+const nodesEl = document.getElementById('nodes');
+const edgesEl = document.getElementById('edges');
+const canvas = document.getElementById('canvas');
+const world = document.getElementById('world');
+
+/* ---- Pan & zoom view state ---- */
+let panX = 0, panY = 0, zoom = 1;
+const MIN_ZOOM = 0.25, MAX_ZOOM = 3;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function applyTransform() {
+  world.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+}
+function updateZoomLabel() {
+  document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + '%';
+}
+// Zoom toward a point given in canvas-screen coordinates, keeping it fixed under the cursor.
+function zoomAt(cx, cy, factor) {
+  const newZoom = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM);
+  if (newZoom === zoom) return;
+  const wx = (cx - panX) / zoom, wy = (cy - panY) / zoom;
+  panX = cx - wx * newZoom;
+  panY = cy - wy * newZoom;
+  zoom = newZoom;
+  applyTransform();
+  updateZoomLabel();
+}
+function zoomBy(factor) {
+  const r = canvas.getBoundingClientRect();
+  zoomAt(r.width / 2, r.height / 2, factor);
+}
+// Reset to 100% and frame all servers (or origin when empty).
+function resetView() {
+  if (!state.servers.length) { panX = 0; panY = 0; zoom = 1; applyTransform(); updateZoomLabel(); return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  state.servers.forEach(s => {
+    const el = nodesEl.querySelector(`[data-id="${s.id}"]`);
+    const w = NODE_W, h = el ? el.offsetHeight : NODE_H;
+    minX = Math.min(minX, s.x || 0); minY = Math.min(minY, s.y || 0);
+    maxX = Math.max(maxX, (s.x || 0) + w); maxY = Math.max(maxY, (s.y || 0) + h);
+  });
+  const r = canvas.getBoundingClientRect();
+  const pad = 60;
+  const fit = Math.min((r.width - pad * 2) / (maxX - minX), (r.height - pad * 2) / (maxY - minY), 1);
+  zoom = clamp(fit, MIN_ZOOM, MAX_ZOOM);
+  panX = (r.width - (maxX - minX) * zoom) / 2 - minX * zoom;
+  panY = (r.height - (maxY - minY) * zoom) / 2 - minY * zoom;
+  applyTransform();
+  updateZoomLabel();
+}
+
+function matchesSearch(s, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return [s.name, s.role, s.host, s.username, (s.tags||[]).join(' ')]
+    .filter(Boolean).some(v => v.toLowerCase().includes(q));
+}
+
+function render() {
+  const q = document.getElementById('search').value.trim();
+  document.getElementById('emptyState').style.display = state.servers.length ? 'none' : 'flex';
+
+  // Nodes
+  nodesEl.innerHTML = '';
+  state.servers.forEach(s => {
+    const dim = q && !matchesSearch(s, q);
+    const el = document.createElement('div');
+    el.className = 'node' + (s.id === selectedId ? ' selected' : '') + (connectMode ? ' connect-target' : '');
+    el.style.left = (s.x || 60) + 'px';
+    el.style.top = (s.y || 60) + 'px';
+    el.style.opacity = dim ? 0.25 : 1;
+    el.dataset.id = s.id;
+    const color = s.color || COLORS[0];
+    el.innerHTML = `
+      <div class="bar" style="background:${color}"></div>
+      <div class="body">
+        <div class="name"><span class="dot" style="background:${color}"></span>${esc(s.name)}</div>
+        ${s.role ? `<div class="role">${esc(s.role)}</div>` : ''}
+        ${s.host ? `<div class="host">${esc(s.host)}${s.port ? ':' + esc(s.port) : ''}</div>` : ''}
+      </div>`;
+    nodesEl.appendChild(el);
+    attachNodeHandlers(el, s);
+  });
+
+  renderEdges();
+}
+
+function nodeCenter(s) {
+  const el = nodesEl.querySelector(`[data-id="${s.id}"]`);
+  const h = el ? el.offsetHeight : NODE_H;
+  return { x: (s.x || 60) + NODE_W / 2, y: (s.y || 60) + h / 2 };
+}
+
+function renderEdges() {
+  edgesEl.innerHTML = '';
+  // remove old labels
+  nodesEl.querySelectorAll('.edge-label').forEach(n => n.remove());
+  document.querySelectorAll('.edge-label').forEach(n => n.remove());
+
+  state.connections.forEach(c => {
+    const a = state.servers.find(s => s.id === c.from);
+    const b = state.servers.find(s => s.id === c.to);
+    if (!a || !b) return;
+    const p1 = nodeCenter(a), p2 = nodeCenter(b);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', p1.x); line.setAttribute('y1', p1.y);
+    line.setAttribute('x2', p2.x); line.setAttribute('y2', p2.y);
+    line.setAttribute('stroke', '#3d4a60');
+    line.setAttribute('stroke-width', '2');
+    edgesEl.appendChild(line);
+
+    if (c.label) {
+      const lbl = document.createElement('div');
+      lbl.className = 'edge-label';
+      lbl.textContent = c.label;
+      lbl.style.left = ((p1.x + p2.x) / 2) + 'px';
+      lbl.style.top = ((p1.y + p2.y) / 2) + 'px';
+      world.appendChild(lbl);
+    }
+  });
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* ============================ Node drag + click + connect ============================ */
+function attachNodeHandlers(el, s) {
+  let startX, startY, origX, origY, moved = false, dragging = false;
+
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (connectMode) return; // handled by click
+    dragging = true; moved = false;
+    startX = e.clientX; startY = e.clientY;
+    origX = s.x || 60; origY = s.y || 60;
+    el.classList.add('dragging');
+    e.preventDefault();
+
+    function move(ev) {
+      const sdx = ev.clientX - startX, sdy = ev.clientY - startY;
+      if (Math.abs(sdx) > 3 || Math.abs(sdy) > 3) moved = true;
+      // screen movement -> world movement: divide by current zoom
+      s.x = origX + sdx / zoom;
+      s.y = origY + sdy / zoom;
+      el.style.left = s.x + 'px';
+      el.style.top = s.y + 'px';
+      renderEdges();
+    }
+    function up() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      el.classList.remove('dragging');
+      dragging = false;
+      if (moved) save();
+      else selectServer(s.id);
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+
+  el.addEventListener('click', e => {
+    if (!connectMode) return;
+    handleConnectClick(s);
+  });
+}
+
+/* ============================ Connect mode ============================ */
+function toggleConnectMode() {
+  connectMode = !connectMode;
+  connectSource = null;
+  document.getElementById('connectBtn').classList.toggle('active', connectMode);
+  document.getElementById('connectBanner').style.display = connectMode ? 'block' : 'none';
+  if (connectMode) closePanel();
+  render();
+}
+
+async function handleConnectClick(s) {
+  if (!connectSource) {
+    connectSource = s.id;
+    document.getElementById('connectBanner').textContent = `Source: ${s.name}. Now click the target server.`;
+    const el = nodesEl.querySelector(`[data-id="${s.id}"]`);
+    if (el) el.classList.add('selected');
+    return;
+  }
+  if (connectSource === s.id) { toast('Pick a different server'); return; }
+  const sourceId = connectSource;
+  const exists = state.connections.some(c =>
+    (c.from === sourceId && c.to === s.id) || (c.from === s.id && c.to === sourceId));
+  if (exists) { toast('Those are already connected'); toggleConnectMode(); return; }
+  const label = await askText('Label for this connection (optional):', '');
+  if (label === null) { toggleConnectMode(); return; }   // user cancelled
+  state.connections.push({ id: uid(), from: sourceId, to: s.id, label: label.trim() });
+  save();
+  toast('Connected ✓');
+  toggleConnectMode();
+}
+
+/* ---- Custom prompt dialog (replacement for unsupported window.prompt) ---- */
+let _promptResolver = null;
+function askText(title, defaultVal = '') {
+  return new Promise(resolve => {
+    _promptResolver = resolve;
+    document.getElementById('promptTitle').textContent = title;
+    const inp = document.getElementById('promptInput');
+    inp.value = defaultVal;
+    document.getElementById('promptOverlay').classList.add('open');
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); promptResolve(inp.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); promptResolve(null); }
+    };
+  });
+}
+function promptResolve(val) {
+  document.getElementById('promptOverlay').classList.remove('open');
+  const r = _promptResolver; _promptResolver = null;
+  if (r) r(val);
+}
+
+/* ============================ Selection / detail panel ============================ */
+function selectServer(id) {
+  selectedId = id;
+  render();
+  openPanel();
+}
+
+function openPanel() {
+  const s = state.servers.find(x => x.id === selectedId);
+  if (!s) return;
+  document.getElementById('pName').textContent = s.name;
+  document.getElementById('pDot').style.background = s.color || COLORS[0];
+
+  const conns = state.connections.filter(c => c.from === s.id || c.to === s.id);
+  const body = document.getElementById('pBody');
+  body.innerHTML = `
+    ${s.host ? `<button class="primary" style="width:100%;margin-bottom:14px" onclick="connectVSCode('${s.id}')">🖥 Connect with VS Code (Remote-SSH)</button>` : ''}
+    ${s.role ? field('Role / What it does', esc(s.role)) : ''}
+    ${s.host ? field('Host', `<span class="mono">${esc(s.host)}${s.port ? ':' + esc(s.port) : ''}</span> <button class="icon" onclick="copyText('${jsEsc(s.host + (s.port ? ':' + s.port : ''))}')">⧉</button>`) : ''}
+    ${s.username ? field('Username', `<span class="mono">${esc(s.username)}</span> <button class="icon" onclick="copyText('${jsEsc(s.username)}')">⧉</button>`) : ''}
+    ${passwordField(s)}
+    ${(s.tags && s.tags.length) ? field('Tags', s.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')) : ''}
+    ${s.notes ? field('Notes', esc(s.notes).replace(/\n/g, '<br>')) : ''}
+    ${field('Connections (' + conns.length + ')', connList(s, conns))}
+  `;
+  document.getElementById('panel').classList.add('open');
+}
+
+function field(label, val) {
+  return `<div class="field"><label>${label}</label><div class="val">${val}</div></div>`;
+}
+
+function passwordField(s) {
+  if (!s.password) return field('Password', '<span style="color:var(--muted)">— none saved —</span>');
+  const pwId = 'pw_' + s.id;
+  return `<div class="field"><label>Password</label>
+    <div class="pw-row">
+      <div class="pw" id="${pwId}" data-shown="0" data-pw="${esc(s.password)}">••••••••••</div>
+      <button class="icon" onclick="togglePw('${s.id}')" id="eye_${s.id}">👁</button>
+      <button class="icon primary" onclick="copyText(document.getElementById('${pwId}').dataset.pw)">⧉ Copy</button>
+    </div></div>`;
+}
+
+function togglePw(id) {
+  const el = document.getElementById('pw_' + id);
+  const shown = el.dataset.shown === '1';
+  el.dataset.shown = shown ? '0' : '1';
+  el.textContent = shown ? '••••••••••' : el.dataset.pw;
+  document.getElementById('eye_' + id).textContent = shown ? '👁' : '🙈';
+}
+
+function connList(s, conns) {
+  if (!conns.length) return '<span style="color:var(--muted)">No connections yet</span>';
+  return '<div class="conn-list">' + conns.map(c => {
+    const otherId = c.from === s.id ? c.to : c.from;
+    const other = state.servers.find(x => x.id === otherId);
+    if (!other) return '';
+    return `<div class="conn-item">
+      <span class="dot" style="background:${other.color || COLORS[0]}"></span>
+      <span class="arrow">${c.from === s.id ? '→' : '←'}</span>
+      <span>${esc(other.name)}</span>
+      ${c.label ? `<span class="tag" style="margin:0">${esc(c.label)}</span>` : ''}
+      <span class="x" title="Remove connection" onclick="removeConn('${c.id}')">✕</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function removeConn(id) {
+  state.connections = state.connections.filter(c => c.id !== id);
+  save(); render(); openPanel();
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+  selectedId = null;
+  render();
+}
+
+/* ============================ Copy ============================ */
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast('Copied ✓'), () => fallbackCopy(text));
+  } else fallbackCopy(text);
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast('Copied ✓'); } catch (e) { toast('Copy failed'); }
+  document.body.removeChild(ta);
+}
+function jsEsc(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+/* ============================ Launch VS Code Remote-SSH ============================ */
+async function connectVSCode(id) {
+  const s = state.servers.find(x => x.id === id);
+  if (!s || !s.host) { toast('No host set for this server'); return; }
+  toast('Launching VS Code…');
+  try {
+    const res = await window.api.vscodeConnect({ host: s.host, user: s.username, remotePath: s.vscodePath });
+    if (res && res.ok) toast(res.via === 'uri' ? 'Opening VS Code ✓' : 'VS Code launching ✓');
+    else toast((res && res.error) ? res.error : 'Failed to launch VS Code');
+  } catch (e) {
+    toast('Failed to launch VS Code');
+  }
+}
+
+/* ============================ Add / Edit form ============================ */
+function buildColorRow() {
+  const row = document.getElementById('colorRow');
+  row.innerHTML = '';
+  COLORS.forEach(c => {
+    const sw = document.createElement('div');
+    sw.className = 'swatch' + (c === pendingColor ? ' sel' : '');
+    sw.style.background = c;
+    sw.onclick = () => { pendingColor = c; buildColorRow(); };
+    row.appendChild(sw);
+  });
+}
+
+function openForm(server) {
+  const editing = !!server;
+  document.getElementById('formTitle').textContent = editing ? 'Edit Server' : 'Add Server';
+  document.getElementById('f_id').value = editing ? server.id : '';
+  document.getElementById('f_name').value = editing ? server.name : '';
+  document.getElementById('f_role').value = editing ? (server.role || '') : '';
+  document.getElementById('f_host').value = editing ? (server.host || '') : '';
+  document.getElementById('f_port').value = editing ? (server.port || '') : '';
+  document.getElementById('f_user').value = editing ? (server.username || '') : '';
+  document.getElementById('f_pass').value = editing ? (server.password || '') : '';
+  document.getElementById('f_vscode').value = editing ? (server.vscodePath || '') : '';
+  document.getElementById('f_tags').value = editing ? (server.tags || []).join(', ') : '';
+  document.getElementById('f_notes').value = editing ? (server.notes || '') : '';
+  pendingColor = editing ? (server.color || COLORS[0]) : COLORS[state.servers.length % COLORS.length];
+  buildColorRow();
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(() => document.getElementById('f_name').focus(), 50);
+}
+function closeForm() { document.getElementById('overlay').classList.remove('open'); }
+
+function saveServer() {
+  const name = document.getElementById('f_name').value.trim();
+  if (!name) { toast('Name is required'); document.getElementById('f_name').focus(); return; }
+  const id = document.getElementById('f_id').value;
+  const data = {
+    name,
+    role: document.getElementById('f_role').value.trim(),
+    host: document.getElementById('f_host').value.trim(),
+    port: document.getElementById('f_port').value.trim(),
+    username: document.getElementById('f_user').value.trim(),
+    password: document.getElementById('f_pass').value,
+    vscodePath: document.getElementById('f_vscode').value.trim(),
+    tags: document.getElementById('f_tags').value.split(',').map(t => t.trim()).filter(Boolean),
+    notes: document.getElementById('f_notes').value.trim(),
+    color: pendingColor,
+  };
+  if (id) {
+    const s = state.servers.find(x => x.id === id);
+    Object.assign(s, data);
+  } else {
+    // place new node in a loose grid
+    const n = state.servers.length;
+    data.id = uid();
+    data.x = 60 + (n % 4) * 200;
+    data.y = 60 + Math.floor(n / 4) * 150;
+    state.servers.push(data);
+    selectedId = data.id;
+  }
+  save();
+  closeForm();
+  render();
+  if (id) openPanel();
+  else selectServer(data.id);
+  toast('Saved ✓');
+}
+
+function editSelected() {
+  const s = state.servers.find(x => x.id === selectedId);
+  if (s) openForm(s);
+}
+function deleteSelected() {
+  const s = state.servers.find(x => x.id === selectedId);
+  if (!s) return;
+  if (!confirm(`Delete "${s.name}"? This also removes its connections.`)) return;
+  state.servers = state.servers.filter(x => x.id !== selectedId);
+  state.connections = state.connections.filter(c => c.from !== selectedId && c.to !== selectedId);
+  save(); closePanel();
+  toast('Deleted');
+}
+
+/* ============================ Export / Import (native dialogs) ============================ */
+async function exportData() {
+  const res = await window.api.exportData(state);
+  if (res && res.ok) toast('Exported backup ✓');
+  else if (res && !res.canceled) toast('Export failed');
+}
+async function importData() {
+  const res = await window.api.importData();
+  if (!res || res.canceled) return;
+  if (!res.ok) { toast(res.error ? 'Invalid file' : 'Import failed'); return; }
+  if (!confirm('Import will replace your current data. Continue?')) return;
+  state = { servers: res.data.servers || [], connections: res.data.connections || [] };
+  save(); closePanel(); render();
+  toast('Imported ✓');
+}
+
+/* ============================ Toast + misc ============================ */
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('promptOverlay').classList.contains('open')) { promptResolve(null); return; }
+  if (connectMode) toggleConnectMode();
+  else if (document.getElementById('overlay').classList.contains('open')) closeForm();
+  else closePanel();
+});
+// Pan by dragging the empty background; a click (no drag) deselects.
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (e.target.closest('.node') || e.target.closest('.zoom-ctrl')) return;
+  const startX = e.clientX, startY = e.clientY, sPanX = panX, sPanY = panY;
+  let moved = false;
+  function move(ev) {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    panX = sPanX + dx; panY = sPanY + dy;
+    applyTransform();
+  }
+  function up() {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    canvas.classList.remove('panning');
+    if (!moved && !connectMode) closePanel();
+  }
+  canvas.classList.add('panning');
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+});
+
+// Wheel = zoom toward cursor (mouse wheel and trackpad pinch both land here).
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const cx = e.clientX - r.left, cy = e.clientY - r.top;
+  // Trackpad pinch sets ctrlKey and uses small deltas; use a stronger factor for it.
+  const k = e.ctrlKey ? 0.012 : 0.0015;
+  const factor = Math.exp(-e.deltaY * k);
+  zoomAt(cx, cy, factor);
+}, { passive: false });
+
+/* ============================ Boot ============================ */
+(async () => {
+  await load();
+  render();
+})();
+</script>
+</body>
+</html>
